@@ -124,6 +124,48 @@ check "goto hint is omitted when nothing is bound" \
   "-- Top of the ranking alpha" \
   "$(sed 's/.* -- /-- /' "$FIXTURE_DIR/toasts.log")"
 
+setup
+fixture '.result.agents |= map(select(.pane_id != "w1:p4")
+                               | .focused = (.pane_id == "w1:p1"))'
+cat >"$T/near.toml" <<'TOML'
+[keys]
+prefix = "alt+space"
+[[keys.command]]
+key = "alt+shift+p"
+type = "plugin_action"
+command = "agent-priority.downer"
+[[keys.command]]
+key = "prefix+p"
+type = "plugin_action"
+command = "other-plugin.open"
+[[keys.command]]
+key = "alt+x"
+type = "shell"
+command = "agent-priority.down"
+TOML
+HERDR_CONFIG_PATH="$T/near.toml" sh "$SCRIPT" goto || true
+check "near-miss bindings give no hint" "-- Top of the ranking alpha" \
+  "$(sed 's/.* -- /-- /' "$FIXTURE_DIR/toasts.log")"
+
+setup
+fixture '.result.agents |= map(select(.pane_id != "w1:p4")
+                               | .focused = (.pane_id == "w1:p1"))'
+cat >"$T/legacy.toml" <<'TOML'
+[keys]
+prefix = "alt+space"
+[[keys.command]]
+key = "alt+shift+p"
+type = "shell"
+command = 'sh -c "$HOME/.config/herdr/herdr-agent-priority.sh down"'
+[[keys.command]]
+key = "prefix+p"
+type = "shell"
+command = 'sh -c "/opt/x/agent-priority.sh open"'
+TOML
+HERDR_CONFIG_PATH="$T/legacy.toml" sh "$SCRIPT" goto || true
+check "shell bindings (old and new script name) still give the hint" "yes" \
+  "$(grep -qF 'alt+shift+p to lower it · alt+space p to pick another' "$FIXTURE_DIR/toasts.log" && echo yes || echo no)"
+
 # --- lock: concurrent nudges are not lost ------------------------------------
 setup
 AGENT_PRIORITY_CRIT_DELAY=0.3

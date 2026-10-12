@@ -144,6 +144,9 @@ toast() { # toast <title> <body>
 # because the hint in a toast is only useful while it is true, and the bindings
 # have moved before (the picker went from alt+p to prefix+p). `prefix+` is
 # expanded to the real prefix, since "prefix" is config vocabulary, not a key.
+# Matches either binding form: a shell command naming the script
+# (agent-priority.sh <sub>, or the pre-plugin-move herdr-agent-priority.sh)
+# or a plugin_action command naming the action (agent-priority.<sub>).
 keybind_for() { # keybind_for <subcommand>
   python3 - "$1" "${HERDR_CONFIG_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/config.toml}" \
     <<'PYKEY' 2>/dev/null || true
@@ -154,11 +157,20 @@ with open(path, "rb") as f:
 # A word boundary isn't enough: "open" is also a boundary inside "open-foo",
 # since - is not a word character. Require what actually follows a shell
 # token instead: whitespace, a closing quote, or end of string.
+#
+# Shell bindings name the script: agent-priority.sh (herdr-agent-priority.sh
+# before the plugin move also matches). Plugin bindings name the action.
 quote_chars = '"' + "'"
-pat = re.compile(r"herdr-agent-priority\.sh\s+" + re.escape(sub) +
+pat = re.compile(r"agent-priority\.sh\s+" + re.escape(sub) +
                   r"(?=\s|[" + quote_chars + r"]|$)")
+action = "agent-priority." + sub
 for c in keys.get("command", []):
-    if pat.search(c.get("command", "")):
+    cmd = c.get("command", "")
+    if c.get("type") == "plugin_action":
+        hit = cmd == action
+    else:
+        hit = bool(pat.search(cmd))
+    if hit:
         k = c.get("key", "")
         if k.startswith("prefix+") and keys.get("prefix"):
             k = keys["prefix"] + " " + k[len("prefix+"):]

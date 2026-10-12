@@ -2,11 +2,31 @@
 prefix = "alt+space"
 
 [[keys.command]]
-key = "prefix+p"
-type = "shell"
-command = 'sh -c "$HOME/.config/herdr/herdr-agent-priority.sh open"'
+key = "alt+p"
+type = "plugin_action"
+command = "agent-priority.up"
+description = "Raise agent priority"
 
 [[keys.command]]
 key = "alt+shift+p"
-type = "shell"
-command = 'sh -c "$HOME/.config/herdr/herdr-agent-priority.sh down"'
+type = "plugin_action"
+command = "agent-priority.down"
+description = "Lower agent priority"
+
+[[keys.command]]
+key = "alt+z"
+type = "plugin_action"
+command = "agent-priority.snooze"
+description = "Snooze agent (5m/30m/2h/4h/off)"
+
+[[keys.command]]
+key = "alt+g"
+type = "plugin_action"
+command = "agent-priority.goto"
+description = "Go to the top-ranked waiting agent"
+
+[[keys.command]]
+key = "prefix+p"
+type = "plugin_action"
+command = "agent-priority.open"
+description = "Ranked agent picker"
