@@ -1,0 +1,12 @@
+[keys]
+prefix = "alt+space"
+
+[[keys.command]]
+key = "prefix+p"
+type = "shell"
+command = 'sh -c "$HOME/.config/herdr/herdr-agent-priority.sh open"'
+
+[[keys.command]]
+key = "alt+shift+p"
+type = "shell"
+command = 'sh -c "$HOME/.config/herdr/herdr-agent-priority.sh down"'
