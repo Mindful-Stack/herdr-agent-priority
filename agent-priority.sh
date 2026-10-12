@@ -1,23 +1,23 @@
 #!/bin/sh
 # Rank the agents that are waiting on you, and jump to the top of that ranking.
 #
-#   herdr-agent-priority.sh up [pane_id]      raise one step, stops at 5
-#   herdr-agent-priority.sh down [pane_id]    lower one step, stops at 1
-#   herdr-agent-priority.sh set <1-5> [pane_id]
-#   herdr-agent-priority.sh clear [pane_id]
-#   herdr-agent-priority.sh clear-many <file>  clear the ranks of the live
+#   agent-priority.sh up [pane_id]      raise one step, stops at 5
+#   agent-priority.sh down [pane_id]    lower one step, stops at 1
+#   agent-priority.sh set <1-5> [pane_id]
+#   agent-priority.sh clear [pane_id]
+#   agent-priority.sh clear-many <file>  clear the ranks of the live
 #                                               panes named in <file>, one per
 #                                               line, tab-delimited field 1 —
 #                                               a bare id or a full rows() row
-#   herdr-agent-priority.sh snooze [pane_id]   step the snooze: 5m, 30m, 2h, 4h, off
-#   herdr-agent-priority.sh goto              focus the next highest-priority waiting agent
-#   herdr-agent-priority.sh open              open the picker and act on its choice
-#   herdr-agent-priority.sh pick              the picker itself, run inside the popup
-#   herdr-agent-priority.sh rows              the picker's rows, also fzf's reload source
-#   herdr-agent-priority.sh view              re-apply the priority sort to the sidebar
-#   herdr-agent-priority.sh stamp             re-apply priorities and the sort (startup hook)
-#   herdr-agent-priority.sh list              show the queue goto walks, in order
-#   herdr-agent-priority.sh ticker            refresh snooze labels once a minute (started by snooze/stamp)
+#   agent-priority.sh snooze [pane_id]   step the snooze: 5m, 30m, 2h, 4h, off
+#   agent-priority.sh goto              focus the next highest-priority waiting agent
+#   agent-priority.sh open              open the picker and act on its choice
+#   agent-priority.sh pick              the picker itself, run inside the popup
+#   agent-priority.sh rows              the picker's rows, also fzf's reload source
+#   agent-priority.sh view              re-apply the priority sort to the sidebar
+#   agent-priority.sh stamp             re-apply priorities and the sort (startup hook)
+#   agent-priority.sh list              show the queue goto walks, in order
+#   agent-priority.sh ticker            refresh snooze labels once a minute (started by snooze/stamp)
 #
 # THE POINT. With 30-odd agents the sidebar tells you *that* things want you,
 # never *which* to do first, so the fleet becomes a treadmill: you service
@@ -69,7 +69,13 @@ set -eu
 
 SOURCE=agent-priority
 DEFAULT=3
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/herdr"
+# State lives where herdr says: HERDR_PLUGIN_STATE_DIR is set for every plugin
+# command (startup, events, actions, the picker pane) and is
+# ${XDG_STATE_HOME:-~/.local/state}/herdr/plugins/agent-priority. The fallback,
+# for a hand run from a plain shell, is a directory of its own — never inside
+# …/state/herdr/, where agent-priority is the pre-plugin rank FILE and a
+# directory of that name could not be created.
+STATE_DIR="${HERDR_PLUGIN_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-agent-priority}"
 STORE="$STATE_DIR/agent-priority"
 SNOOZE="$STATE_DIR/agent-snooze"
 SELECTION="$STATE_DIR/agent-priority.selection"
@@ -550,7 +556,13 @@ req = {
         ],
     },
 }
-path = os.path.expanduser("~/.config/herdr/herdr.sock")
+# The session's socket: herdr injects HERDR_SOCKET_PATH into every plugin
+# command, and a named session or an isolated XDG_CONFIG_HOME puts it
+# somewhere else than the default. Default mirrors herdr's own:
+# <XDG_CONFIG_HOME or ~/.config>/herdr/herdr.sock.
+path = os.environ.get("HERDR_SOCKET_PATH") or os.path.join(
+    os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+    "herdr", "herdr.sock")
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.settimeout(5)
 s.connect(path)
@@ -797,7 +809,10 @@ rows() {
       }'
 }
 
-SELF="$HOME/.config/herdr/herdr-agent-priority.sh"
+# This script, as an absolute path, for the picker's fzf binds and the
+# ticker start. herdr sets HERDR_PLUGIN_ROOT for plugin commands; a hand run
+# resolves its own directory (absolute, so a different cwd cannot break it).
+SELF="${HERDR_PLUGIN_ROOT:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}/agent-priority.sh"
 
 cmd=${1:-}
 [ -n "$cmd" ] || die "usage: $0 {up|down|set <1-5>|clear|clear-many <file>|snooze|goto|pick|rows|stamp|list} [pane_id]"

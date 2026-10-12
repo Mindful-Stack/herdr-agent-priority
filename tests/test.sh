@@ -15,6 +15,12 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
 SCRIPT="$REPO/agent-priority.sh"
 CONFIG="$HERE/config.toml"
+# Resolve the system fzf/script binaries BEFORE tests/bin goes on PATH: the
+# picker tests need a stub fzf (tests/bin/fzf, Task 8) so agent-priority.sh
+# never shells out to the real thing, but the real-fzf check far below wants
+# the genuine binary, not the stub that would otherwise shadow it.
+REAL_FZF=$(command -v fzf || true)
+REAL_SCRIPT=$(command -v script || true)
 PATH="$HERE/bin:$PATH"
 export PATH
 
@@ -44,7 +50,9 @@ setup() {
   # Strip anything that could point this run at a real herdr session, so a
   # call that slips past the stub fails loudly instead of reaching it.
   unset HERDR_SOCKET_PATH HERDR_BIN_PATH HERDR_PANE_ID HERDR_TAB_ID \
-    HERDR_WORKSPACE_ID HERDR_ENV XDG_CONFIG_HOME 2>/dev/null || true
+    HERDR_WORKSPACE_ID HERDR_ENV XDG_CONFIG_HOME \
+    HERDR_PLUGIN_ROOT HERDR_PLUGIN_STATE_DIR HERDR_PLUGIN_CONFIG_DIR \
+    HERDR_PLUGIN_ID 2>/dev/null || true
   HERDR_SOCKET_PATH="$T/none.sock"
   export HERDR_SOCKET_PATH
   mkdir -p "$HOME" "$FIXTURE_DIR"
@@ -53,12 +61,13 @@ setup() {
   : >"$FIXTURE_DIR/metadata.log"
   : >"$FIXTURE_DIR/calls.log"
   : >"$FIXTURE_DIR/setsid.log"
+  : >"$FIXTURE_DIR/fzf.args"
 }
 
 # Never abort the runner: a failing script (e.g. "unknown command" before a
 # feature exists) must show up as failed checks, not kill the remaining tests.
 run() { sh "$SCRIPT" "$@" || true; }
-state() { printf '%s/herdr/%s' "$XDG_STATE_HOME" "$1"; }
+state() { printf '%s/herdr-agent-priority/%s' "$XDG_STATE_HOME" "$1"; }
 fixture() { # fixture <jq filter>: rewrite the agent list in place
   jq "$1" "$FIXTURE_DIR/agents.json" >"$FIXTURE_DIR/a.tmp"
   mv "$FIXTURE_DIR/a.tmp" "$FIXTURE_DIR/agents.json"
@@ -167,19 +176,19 @@ check "5m wake is 300s from now" "yes" \
   "$([ "$wake" -ge $((before + 300)) ] && [ "$wake" -le $((before + 302)) ] && echo yes || echo no)"
 
 setup
-mkdir -p "$XDG_STATE_HOME/herdr"
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 printf 'w1:p1\t%s\t15\n' $(( $(date +%s) + 600 )) >"$(state agent-snooze)"
 run snooze w1:p1
 check "a step outside the ladder is treated as unsnoozed" "5" "$(snooze_step_of w1:p1)"
 
 setup
-mkdir -p "$XDG_STATE_HOME/herdr"
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 printf 'w1:p1\t%s\t30\n' $(( $(date +%s) - 1 )) >"$(state agent-snooze)"
 run snooze w1:p1
 check "an expired snooze restarts at 5m" "5" "$(snooze_step_of w1:p1)"
 
 setup
-mkdir -p "$XDG_STATE_HOME/herdr"
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 printf 'w1:p2\textra\t%s\t30\n' $(( $(date +%s) + 600 )) >"$(state agent-snooze)"
 printf 'w1:p4\t%s\t30\n' $(( $(date +%s) + 100000 )) >>"$(state agent-snooze)"
 run snooze w1:p1
@@ -187,7 +196,7 @@ check "a 4-field line and a wake past the 4h cap are dropped, not carried as sno
   "w1:p1" "$(awk -F'\t' '{ print $1 }' "$(state agent-snooze)" | tr '\n' ' ' | sed 's/ $//')"
 
 setup
-mkdir -p "$XDG_STATE_HOME/herdr"
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 printf 'w1:p4\t%s\t30\n' $(( $(date +%s) - 1 )) >"$(state agent-snooze)"
 printf 'w1:p2\t%s\t15\n' $(( $(date +%s) + 600 )) >>"$(state agent-snooze)"
 run snooze w1:p1
@@ -243,7 +252,7 @@ check "a failed label clear is logged" "yes" \
 setup
 run snooze w1:p1
 check "snooze starts the ticker, detached" \
-  "args=[-f $HOME/.config/herdr/herdr-agent-priority.sh ticker]" \
+  "args=[-f $REPO/agent-priority.sh ticker]" \
   "$(sed -n 1p "$FIXTURE_DIR/setsid.log" | sed 's/ fds=.*//')"
 check "snooze starts the ticker with fd 9 closed" "no" "$(fd9_in 1)"
 for _ in 2 3 4 5; do run snooze w1:p1; done
@@ -256,7 +265,7 @@ run snooze w1:p1
 check "a snoozed pane leaves the queue" "w1:p4 w1:p2" "$(queue_ids)"
 
 setup
-mkdir -p "$XDG_STATE_HOME/herdr"
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 printf 'w1:p1\t%s\t5\n' $(( $(date +%s) - 1 )) >"$(state agent-snooze)"
 check "an expired snooze is back in the queue" "w1:p1 w1:p4 w1:p2" "$(queue_ids)"
 
@@ -286,7 +295,7 @@ check "w1:p10 is not caught as a substring of the snoozed w1:p1" \
   "w1:p4 w1:p10 w1:p2" "$(queue_ids)"
 
 setup
-mkdir -p "$XDG_STATE_HOME/herdr"
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 # Hand-written wakes, well apart, so "earliest" actually discriminates —
 # real `snooze` calls a few hundred ms apart would all round to the same
 # HH:MM and the assertion below couldn't tell right from wrong.
@@ -317,7 +326,7 @@ check "goto stays silent when the only active snooze was never waiting" "" \
 
 # --- stamp prunes the snooze store -------------------------------------------
 setup
-mkdir -p "$XDG_STATE_HOME/herdr"
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 future=$(( $(date +%s) + 600 ))
 {
   printf 'w1:p1\t%s\t5\n' "$future"               # live, active: keep
@@ -330,7 +339,7 @@ check "stamp keeps only live active snoozes" "w1:p1" "$(cut -f1 "$(state agent-s
 
 # --- stamp prunes the rank store ---------------------------------------------
 setup
-mkdir -p "$XDG_STATE_HOME/herdr"
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 {
   printf 'w1:p1\t5\n'
   printf 'w9:gone\t5\n'
@@ -361,7 +370,7 @@ check "stamp clears a label with no snooze behind it" \
   "$(snz_lines w1:p2)"
 check "stamp leaves a label whose snooze is active alone" "" "$(snz_lines w1:p1)"
 check "stamp starts the ticker when something is snoozed" \
-  "args=[-f $HOME/.config/herdr/herdr-agent-priority.sh ticker]" \
+  "args=[-f $REPO/agent-priority.sh ticker]" \
   "$(sed -n 1p "$FIXTURE_DIR/setsid.log" | sed 's/ fds=.*//')"
 check "stamp starts the ticker with fd 9 closed" "no" "$(fd9_in 1)"
 
@@ -390,7 +399,7 @@ check "the next stamp issues the clear the off press lost" \
 for mode in exit errjson empty; do
   setup
   set_snz w1:p2 "zz 3m"
-  mkdir -p "$XDG_STATE_HOME/herdr"
+  mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
   printf 'w1:p1\t5\n' >"$(state agent-priority)"
   printf 'w1:p1\t%s\t5\n' $(( $(date +%s) + 600 )) >"$(state agent-snooze)"
   HERDR_STUB_FAIL_PANE_LIST=$mode run stamp
@@ -412,6 +421,48 @@ check "snoozed row sorts last in its band" "w1:p4 w1:p3 w1:p1 w1:p2" \
 wake=$(awk -F'\t' '$1 == "w1:p1" { print $2 }' "$(state agent-snooze)" 2>/dev/null || true)
 check "snoozed row shows its wake time" "yes" \
   "$(printf '%s\n' "$rows_plain" | grep '^w1:p1' | grep -qF "zz $(date -d "@$wake" +%H:%M)" && echo yes || echo no)"
+
+# --- plugin environment (Task 8) -------------------------------------------------
+setup
+HERDR_PLUGIN_STATE_DIR="$T/pstate" sh "$SCRIPT" up w1:p2 || true
+check "state goes to HERDR_PLUGIN_STATE_DIR when herdr sets it" "w1:p2	4" \
+  "$(cat "$T/pstate/agent-priority" 2>/dev/null)"
+check "and nothing is written to the fallback then" "no" \
+  "$([ -e "$XDG_STATE_HOME/herdr-agent-priority" ] && echo yes || echo no)"
+
+setup
+mkdir -p "$XDG_STATE_HOME/herdr"
+printf 'w1:p1\t5\n' >"$XDG_STATE_HOME/herdr/agent-priority"   # the old rank FILE
+run up w1:p2
+check "the fallback never collides with the old rank file" "w1:p2	4" "$(cat "$(state agent-priority)")"
+
+setup
+HERDR_PLUGIN_ROOT="$T/root" sh "$SCRIPT" pick || true
+check "SELF comes from HERDR_PLUGIN_ROOT" "yes" \
+  "$(grep '^--bind=alt-1:' "$FIXTURE_DIR/fzf.args" | grep -qF "$T/root/agent-priority.sh" && echo yes || echo no)"
+
+setup
+( cd "$REPO" && sh ./agent-priority.sh pick ) || true
+check "without HERDR_PLUGIN_ROOT, SELF is this script's absolute path" "yes" \
+  "$(grep '^--bind=alt-1:' "$FIXTURE_DIR/fzf.args" | grep -qF "$REPO/agent-priority.sh" && echo yes || echo no)"
+
+# set_view talks to $HERDR_SOCKET_PATH. One foreground python binds the socket,
+# runs `view` as a child, answers it, and prints the method it received.
+setup
+method=$(python3 - "$T/view.sock" "$SCRIPT" <<'PY' 2>/dev/null || true
+import json, os, socket, subprocess, sys
+path, script = sys.argv[1], sys.argv[2]
+srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+srv.bind(path); srv.listen(1); srv.settimeout(5)
+child = subprocess.Popen(["sh", script, "view"], env={**os.environ, "HERDR_SOCKET_PATH": path})
+conn, _ = srv.accept()
+data = conn.recv(65536)
+conn.sendall(b'{"id":"agent-priority:view","result":{}}\n')
+conn.close(); child.wait(5)
+print(json.loads(data)["method"])
+PY
+)
+check "set_view connects to HERDR_SOCKET_PATH" "agent.view.set" "$method"
 
 # --- harness self-checks (Task 2) ---------------------------------------------
 # These prove the stubs can see what later tests assert on. If the fd probe
@@ -616,7 +667,7 @@ cm_file() { # cm_file <lines...>: write each arg as a line to a fresh temp file,
 # pane and a non-live id are left alone; exactly one clear stamp per pane
 # actually cleared, none for the other two; the toast counts only real clears.
 setup
-mkdir -p "$XDG_STATE_HOME/herdr"
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 printf 'w1:p1\t5\nw1:p3\t4\n' >"$(state agent-priority)"
 cmf=$(cm_file w1:p1 w1:p3 w1:p2 w9:gone)
 run clear-many "$cmf"
@@ -639,7 +690,7 @@ check "clear-many logs the non-live pane as skipped" "yes" \
 setup
 AGENT_PRIORITY_CRIT_DELAY=0.3
 export AGENT_PRIORITY_CRIT_DELAY
-mkdir -p "$XDG_STATE_HOME/herdr"
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 printf 'w1:p1\t5\n' >"$(state agent-priority)"
 cmf=$(cm_file w1:p1)
 run up w1:p4 & run clear-many "$cmf" & wait
@@ -653,7 +704,7 @@ unset AGENT_PRIORITY_CRIT_DELAY
 # zero-cleared wording from both — a naive "Cleared $n ranks" would say
 # "Cleared 1 ranks" and "Cleared 0 ranks" instead.
 setup
-mkdir -p "$XDG_STATE_HOME/herdr"
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 printf 'w1:p1\t5\n' >"$(state agent-priority)"
 cmf=$(cm_file w1:p1)
 run clear-many "$cmf"
@@ -697,7 +748,7 @@ check "clear-many on a missing file writes nothing to the store" "" \
 # suffix (and ANSI codes) glued on, so every row would be logged as "not a
 # live agent" and nothing would ever clear.
 setup
-mkdir -p "$XDG_STATE_HOME/herdr"
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 printf 'w1:p1\t5\nw1:p3\t4\n' >"$(state agent-priority)"
 cmf="$T/cm-fullrows.txt"
 {
@@ -755,7 +806,7 @@ check "alt-0's placeholder is not the unexpandable {*1f}" "no" \
 # needed) filter over --query settles, then quits — no interaction, no wait
 # loop. The harness's stubbed `sleep` refuses any real wait, so this uses
 # `timeout` (a syscall-level watchdog, not a sleep) to bound the run instead.
-if command -v fzf >/dev/null 2>&1 && command -v script >/dev/null 2>&1; then
+if [ -n "$REAL_FZF" ] && [ -n "$REAL_SCRIPT" ]; then
   setup
   placeholder=$(printf '%s\n' "$binds" | grep 'alt-0:' | \
     sed -n 's/.*clear-many \({[^)]*}\)).*/\1/p')
@@ -763,9 +814,9 @@ if command -v fzf >/dev/null 2>&1 && command -v script >/dev/null 2>&1; then
   printf 'w1:p1\tP4 alpha\nw1:p2\t-- beta\nw1:p3\tP4 gamma\n' >"$rowsfile"
   outfile="$T/fzf-out.txt"
   rm -f "$outfile"
-  fzfcmd="fzf --delimiter='	' --with-nth=2.. --no-sort --query='P4' \
+  fzfcmd="'$REAL_FZF' --delimiter='	' --with-nth=2.. --no-sort --query='P4' \
     --bind 'result:execute-silent(cp $placeholder $outfile)+abort' <'$rowsfile'"
-  timeout 5 script -qec "$fzfcmd" "$T/fzf-typescript.log" >/dev/null 2>&1 || true
+  timeout 5 "$REAL_SCRIPT" -qec "$fzfcmd" "$T/fzf-typescript.log" >/dev/null 2>&1 || true
   got=$(cut -f1 "$outfile" 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')
   check "real fzf: alt-0's placeholder ($placeholder) resolves to the matched pane ids" \
     "w1:p1 w1:p3" "$got"

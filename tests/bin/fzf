@@ -1,0 +1,7 @@
+#!/bin/sh
+# Stub fzf: record every argument on its own line — so tests can read the
+# picker's real --bind strings — swallow the rows, and exit like an
+# interrupted fzf (130), i.e. no choice.
+for a in "$@"; do printf '%s\n' "$a"; done >"$FIXTURE_DIR/fzf.args"
+cat >/dev/null
+exit 130
