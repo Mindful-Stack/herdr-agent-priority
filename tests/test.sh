@@ -907,4 +907,35 @@ check "alt-0's clear-many command runs from a spaced, quoted path" "" \
 check "alt-0's clear-many command leaves alt-5's earlier write alone" "w1:p2	5" \
   "$(awk -F'\t' '$1 == "w1:p2"' "$(state agent-priority)")"
 
+# --- manifest and README agree with the tested config (Task 11) ---------------------
+# Every plugin_action key in tests/config.toml names an action the manifest
+# declares, and that action runs the same subcommand through $HERDR_PLUGIN_ROOT.
+check "every bound action exists and runs its subcommand" "ok" "$(python3 - "$REPO/herdr-plugin.toml" "$CONFIG" <<'PY'
+import sys, tomllib
+man = tomllib.load(open(sys.argv[1], "rb"))
+cfg = tomllib.load(open(sys.argv[2], "rb"))
+acts = {a["id"]: a["command"] for a in man.get("actions", [])}
+bad = []
+for c in cfg["keys"]["command"]:
+    if c.get("type") != "plugin_action":
+        continue
+    plugin, _, sub = c["command"].partition(".")
+    want = ["sh", "-c", 'exec "$HERDR_PLUGIN_ROOT/agent-priority.sh" ' + sub]
+    if plugin != man["id"] or acts.get(sub) != want:
+        bad.append(c["command"])
+for key in ("startup", "events", "panes"):
+    for e in man.get(key, []):
+        if "$HERDR_PLUGIN_ROOT/agent-priority.sh" not in e["command"][-1]:
+            bad.append(key)
+print("ok" if not bad else " ".join(bad))
+PY
+)"
+
+# The README's keys snippet is exactly what these tests run against.
+readme_keys=$(awk '/<!-- keys-snippet -->/ { on = 1; next } on && /^```toml/ { p = 1; next } p && /^```/ { exit } p' "$REPO/README.md" 2>/dev/null || true)
+check "README keys snippet == tests/config.toml (minus its [keys] header)" \
+  "$(tail -n +4 "$CONFIG")" "$readme_keys"
+check "agent-priority.sh is executable in git" "100755" \
+  "$(cd "$REPO" && git ls-files -s agent-priority.sh | cut -d' ' -f1)"
+
 exit "$failed"

@@ -1,0 +1,21 @@
+name: test
+on:
+  push:
+  pull_request:
+# Read-only: the job checks out and runs tests, nothing else.
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to a full commit SHA (same pin as Mindful-Stack/omascape): a tag can be moved.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      # sh is dash on this runner, bash on the author's machine: both must pass.
+      - name: Syntax
+        run: sh -n agent-priority.sh && sh -n tests/test.sh
+      - name: Offline suite
+        run: sh tests/test.sh
