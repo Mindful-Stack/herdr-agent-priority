@@ -157,9 +157,6 @@ with open(path, "rb") as f:
 # A word boundary isn't enough: "open" is also a boundary inside "open-foo",
 # since - is not a word character. Require what actually follows a shell
 # token instead: whitespace, a closing quote, or end of string.
-#
-# Shell bindings name the script: agent-priority.sh (herdr-agent-priority.sh
-# before the plugin move also matches). Plugin bindings name the action.
 quote_chars = '"' + "'"
 pat = re.compile(r"agent-priority\.sh\s+" + re.escape(sub) +
                   r"(?=\s|[" + quote_chars + r"]|$)")
