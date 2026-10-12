@@ -784,9 +784,9 @@ check "alt-z does not chain down" "yes" \
 # {*f}, not {*1f}: field-1 narrowing (below) does not survive real fzf, so the
 # bind must use the plain all-matched file flag and let clear-many do the cut.
 check "alt-0 sweeps via clear-many over the all-matched file placeholder {*f}" "yes" \
-  "$(printf '%s\n' "$binds" | grep -qF 'alt-0:execute-silent($SELF clear-many {*f})' && echo yes || echo no)"
+  "$(printf '%s\n' "$binds" | grep -qF 'alt-0:execute-silent($q clear-many {*f})' && echo yes || echo no)"
 check "alt-0's placeholder is not the unexpandable {*1f}" "no" \
-  "$(printf '%s\n' "$binds" | grep -qF 'alt-0:execute-silent($SELF clear-many {*1f})' && echo yes || echo no)"
+  "$(printf '%s\n' "$binds" | grep -qF 'alt-0:execute-silent($q clear-many {*1f})' && echo yes || echo no)"
 
 # --- alt-0's placeholder against REAL fzf (Task 6b review fix) ---------------
 # fzf 0.74.3 does not expand {*1f} at all — it passes the literal five
@@ -823,5 +823,46 @@ if [ -n "$REAL_FZF" ] && [ -n "$REAL_SCRIPT" ]; then
 else
   echo "skip  real fzf: alt-0 placeholder check (fzf and/or script not on PATH)"
 fi
+
+# --- picker binds survive a path with spaces and quotes (Task 9) --------------------
+# Distinguishes: unquoted $SELF (`sh -c` tries to run `…/My` and the store
+# stays empty); quoting that does not escape the embedded ' (a syntax
+# error); no --with-shell (with $SHELL=fish a POSIX quote idiom could be
+# read differently).
+setup
+P="$T/My Plugins/Dan's/herdr-agent-priority"
+mkdir -p "$P"
+cp -p "$SCRIPT" "$P/agent-priority.sh"   # -p: the binds exec the file directly
+HERDR_PLUGIN_ROOT="$P" sh "$P/agent-priority.sh" pick || true
+check "the picker pins its child shell to sh" "yes" \
+  "$(grep -qx -- "--with-shell=sh -c" "$FIXTURE_DIR/fzf.args" && echo yes || echo no)"
+# alt-5 is one of the set-and-advance binds (Task 6b): its chain is
+# execute-silent(...)+down+reload(...), not the plainer
+# execute-silent(...)+reload(...) shape alt-p/alt-P/alt-z/alt-0 use, so the
+# extraction regex matches the +down infix too.
+bind=$(grep '^--bind=alt-5:' "$FIXTURE_DIR/fzf.args" | sed 's/^--bind=alt-5://')
+exe=$(printf '%s\n' "$bind" | sed -n 's/^execute-silent(\(.*\))+down+reload(.*)$/\1/p' | sed "s/{1}/'w1:p2'/")
+rel=$(printf '%s\n' "$bind" | sed -n 's/^execute-silent(.*)+down+reload(\(.*\))$/\1/p')
+sh -c "$exe" 2>/dev/null || true
+check "alt-5's execute command runs from a spaced, quoted path" "w1:p2	5" "$(cat "$(state agent-priority)" 2>/dev/null)"
+check "alt-5's reload command lists the rows" "yes" \
+  "$(sh -c "$rel" 2>/dev/null | cut -f1 | grep -qx 'w1:p2' && echo yes || echo no)"
+
+# alt-0's clear-many bind takes a FILE argument ({*f}) rather than a field
+# substitution, so it exercises a different shape of the same hazard: a
+# second $SELF occurrence in the same bind string, with an extra argument
+# after it. The stub fzf never substitutes {*f} (there is no real fzf run
+# here), so the test stands in for fzf and swaps it for a real temp file of
+# matched rows itself — the same id<TAB>display shape clear-many expects.
+printf 'w1:p3\t4\n' >>"$(state agent-priority)"
+cmf="$T/cm-rows.txt"
+printf 'w1:p3\tdummy display\n' >"$cmf"
+bind0=$(grep '^--bind=alt-0:' "$FIXTURE_DIR/fzf.args" | sed 's/^--bind=alt-0://')
+exe0=$(printf '%s\n' "$bind0" | sed -n 's/^execute-silent(\(.*\))+reload(.*)$/\1/p' | sed "s|{\*f}|$cmf|")
+sh -c "$exe0" 2>/dev/null || true
+check "alt-0's clear-many command runs from a spaced, quoted path" "" \
+  "$(awk -F'\t' '$1 == "w1:p3"' "$(state agent-priority)")"
+check "alt-0's clear-many command leaves alt-5's earlier write alone" "w1:p2	5" \
+  "$(awk -F'\t' '$1 == "w1:p2"' "$(state agent-priority)")"
 
 exit "$failed"

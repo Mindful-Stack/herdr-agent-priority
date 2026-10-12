@@ -91,6 +91,11 @@ mkdir -p "$STATE_DIR"
 
 die() { echo "$*" >&2; exit 2; }
 
+# Single-quote a string for a POSIX shell: wrap it in '…' and turn each
+# embedded ' into '\''. For $SELF inside fzf's bind strings, which fzf hands
+# to `sh -c` (pinned below with --with-shell).
+shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
 # Test seam. Widens the gap between reading a store and writing it back, so the
 # concurrency tests can tell a locked store from an unlocked one — without it
 # the window is a few milliseconds and the race only shows up by luck. Unset in
@@ -1027,22 +1032,29 @@ pick)
   # expand. So {*f} is used as-is — the file holds full matched rows,
   # pane_id<TAB>display-text — and `clear-many` itself does the field-1 cut
   # (see its comment).
+  #
+  # $SELF is single-quoted into every bind (shq), and fzf's child shell is
+  # pinned to sh, so a checkout under "My Plugins/" works whatever $SHELL is.
+  # A path containing ')' still would not: fzf(1) warns that parentheses in an
+  # action argument can break its parser.
   command -v fzf >/dev/null || die "pick needs fzf"
+  q=$(shq "$SELF")
   sel=$(rows | fzf \
+    --with-shell='sh -c' \
     --delimiter='\t' --with-nth=2.. --no-sort --cycle --ansi \
     --track --id-nth=1 \
     --prompt='agent > ' \
     --header='enter jump  ·  alt+p/alt+shift+p nudge  ·  alt+z snooze  ·  alt+1-5 rank (3 = unranked)  ·  alt+0 clear matched  ·  esc close' \
     --bind='ctrl-bspace:backward-kill-word' \
-    --bind="alt-1:execute-silent($SELF set 1 {1})+down+reload($SELF rows)" \
-    --bind="alt-2:execute-silent($SELF set 2 {1})+down+reload($SELF rows)" \
-    --bind="alt-3:execute-silent($SELF clear {1})+down+reload($SELF rows)" \
-    --bind="alt-4:execute-silent($SELF set 4 {1})+down+reload($SELF rows)" \
-    --bind="alt-5:execute-silent($SELF set 5 {1})+down+reload($SELF rows)" \
-    --bind="alt-p:execute-silent($SELF up {1})+reload($SELF rows)" \
-    --bind="alt-P:execute-silent($SELF down {1})+reload($SELF rows)" \
-    --bind="alt-z:execute-silent($SELF snooze {1})+reload($SELF rows)" \
-    --bind="alt-0:execute-silent($SELF clear-many {*f})+reload($SELF rows)" || true)
+    --bind="alt-1:execute-silent($q set 1 {1})+down+reload($q rows)" \
+    --bind="alt-2:execute-silent($q set 2 {1})+down+reload($q rows)" \
+    --bind="alt-3:execute-silent($q clear {1})+down+reload($q rows)" \
+    --bind="alt-4:execute-silent($q set 4 {1})+down+reload($q rows)" \
+    --bind="alt-5:execute-silent($q set 5 {1})+down+reload($q rows)" \
+    --bind="alt-p:execute-silent($q up {1})+reload($q rows)" \
+    --bind="alt-P:execute-silent($q down {1})+reload($q rows)" \
+    --bind="alt-z:execute-silent($q snooze {1})+reload($q rows)" \
+    --bind="alt-0:execute-silent($q clear-many {*f})+reload($q rows)" || true)
   [ -n "$sel" ] || exit 0
   target=$(printf '%s\n' "$sel" | cut -f1)
   [ -n "$target" ] || exit 0
