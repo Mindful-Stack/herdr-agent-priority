@@ -34,6 +34,12 @@ command = "agent-priority.down"
 description = "Lower agent priority"
 
 [[keys.command]]
+key = "ctrl+alt+p"
+type = "plugin_action"
+command = "agent-priority.clear"
+description = "Clear agent priority"
+
+[[keys.command]]
 key = "alt+z"
 type = "plugin_action"
 command = "agent-priority.snooze"
@@ -71,6 +77,7 @@ config: the plugin sets herdr's agent view to sort by rank. (`ui.agent_panel_sor
 | --- | --- |
 | `alt+p` | Raise the focused agent's rank one step (stops at 5). |
 | `alt+shift+p` | Lower it one step (stops at 1). |
+| `ctrl+alt+p` | Clear it back to unranked, from any rank. |
 | `alt+z` | Snooze it: 5m, 30m, 2h, 4h, off — one step per press. |
 | `alt+g` | Go to the top of the ranking, cycling within the top band. |
 | `prefix+p` | Open the ranked picker. |

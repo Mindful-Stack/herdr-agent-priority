@@ -43,6 +43,14 @@ title = "Lower agent priority"
 contexts = ["pane"]
 command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/agent-priority.sh\" down"]
 
+# Back to unranked in one press, for a task that is done: stepping there with
+# up/down means knowing which rank you are on.
+[[actions]]
+id = "clear"
+title = "Clear agent priority"
+contexts = ["pane"]
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/agent-priority.sh\" clear"]
+
 [[actions]]
 id = "snooze"
 title = "Snooze agent (5m/30m/2h/4h/off)"
