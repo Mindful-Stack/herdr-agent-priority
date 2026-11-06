@@ -1,7 +1,7 @@
 id = "agent-priority"
 name = "Agent priority"
-version = "2.0.0"
-description = "Rank waiting agents 1-5, jump to the top of the ranking, snooze, and pick from a ranked popup"
+version = "3.0.0"
+description = "Rank waiting agents 1-5, jump to the top of the ranking, pause or snooze, and pick from a ranked popup"
 min_herdr_version = "0.8.2"
 platforms = ["linux"]
 

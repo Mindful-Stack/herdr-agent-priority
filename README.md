@@ -1,13 +1,12 @@
 # herdr agent priority
 
 Rank the agents that are waiting on you from 1 to 5, jump to the top of that
-ranking, snooze the ones waiting on someone else, and pick from a ranked popup.
+ranking, pause or snooze the ones that can wait, and pick from a ranked popup.
 A plugin for [herdr](https://herdr.dev) ≥ 0.8.2 (tested on 0.8.2), Linux.
 
 With thirty agents the sidebar tells you *that* several want you, never *which*
 to do first, so the day goes to whoever finished last. A number you set once,
-when the session starts, lets the work be chosen instead of serviced. Priority
-1 work never getting reached is the intent — it is the cue to close it.
+when the session starts, lets the work be chosen instead of serviced.
 
 ## Install
 
@@ -76,8 +75,8 @@ config: the plugin sets herdr's agent view to sort by rank. (`ui.agent_panel_sor
 | Key | Does |
 | --- | --- |
 | `alt+p` | Raise the focused agent's rank one step (stops at 5). |
-| `alt+shift+p` | Lower it one step (stops at 1). |
-| `ctrl+alt+p` | Clear it back to unranked, from any rank. |
+| `alt+shift+p` | Lower it one step; below unranked it is paused (0). |
+| `ctrl+alt+p` | Clear it back to unranked (1), from any rank. |
 | `alt+z` | Snooze it: 5m, 30m, 2h, 4h, off — one step per press. |
 | `alt+g` | Go to the top of the ranking, cycling within the top band. |
 | `prefix+p` | Open the ranked picker. |
@@ -88,10 +87,11 @@ herdr waits for a terminator that never comes. foot, kitty, ghostty and
 wezterm negotiate it.
 
 Inside the picker: type to filter (the query survives every action), `enter`
-jumps, `alt+p`/`alt+shift+p` nudge, `alt+z` snoozes, `alt+1`–`alt+5` rank
-outright (`alt+3` = unranked), `ctrl+backspace` deletes a word, `esc` closes.
+jumps, `alt+p`/`alt+shift+p` nudge, `alt+z` snoozes, `alt+0`–`alt+5` rank
+outright (`alt+0` = paused, `alt+1` = unranked), `ctrl+backspace` deletes a
+word, `esc` closes.
 
-`alt+1`–`alt+5` also move the cursor to the row below after ranking
+`alt+0`–`alt+5` also move the cursor to the row below after ranking
 (set-and-advance), so walking down a list and ranking as you go keeps landing
 on the row that was visually next, instead of the re-sorted list carrying the
 cursor away with the row you just ranked. `alt+p`, `alt+shift+p` and `alt+z` do
@@ -99,24 +99,34 @@ not advance, since a repeated press of those must keep hitting the same row.
 The list wraps (the picker sets `--cycle`), so ranking past the last row moves
 to the first rather than stopping.
 
-`alt+0` clears the ranks of every row the current filter matches — type a
+`alt+c` clears the ranks of every row the current filter matches — type a
 workspace, a tab, or part of a title first, then press it, rather than
-`alt+3`-ing each row by hand.
+`alt+1`-ing each row by hand.
 
 ## The scale
 
-Five is most important, one least, and **three means unranked**: landing back
-on three removes the label rather than writing `P3`, because unset already
-sorts as three and thirty meaningless labels are noise.
+Five is most important. **One means unranked**, and every agent starts there:
+landing back on one removes the label rather than writing `P1`, because unset
+already sorts as one and thirty meaningless labels are noise. That leaves four
+steps, 2–5, for "more important than the rest", so the top band can stay one
+or two agents wide instead of filling up.
+
+**Zero is paused** — parked until you say otherwise. A paused agent shows
+`P0`, sorts below everything, and `alt+g` never lands on it. Press `alt+p` (or
+`ctrl+alt+p`) to bring it back. For "back in half an hour", snooze instead.
+
+Upgrading from the 1–5 scale (where three was unranked) converts the ranks
+once, on the first run: 5 → 3 and 4 → 2, so today's order is kept with 4 and 5
+free above it; 1–3 become unranked.
 
 ## alt+g
 
 It goes to the **top band** — every waiting agent sharing the highest rank —
 and cycles within it. It never drops you onto a 4 because you pressed again:
 pressing past what you called most important is how a ranking rots into a
-to-do list. Waiting means blocked, done or idle; working and snoozed agents
-are skipped. When the band is just the agent you are on, it says so and names
-your demote and picker keys.
+to-do list. Waiting means blocked, done or idle; working, snoozed and paused
+agents are skipped. When the band is just the agent you are on, it says so
+and names your demote and picker keys.
 
 ## Snooze
 

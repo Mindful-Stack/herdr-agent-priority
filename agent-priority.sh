@@ -2,9 +2,9 @@
 # Rank the agents that are waiting on you, and jump to the top of that ranking.
 #
 #   agent-priority.sh up [pane_id]      raise one step, stops at 5
-#   agent-priority.sh down [pane_id]    lower one step, stops at 1
-#   agent-priority.sh set <1-5> [pane_id]
-#   agent-priority.sh clear [pane_id]
+#   agent-priority.sh down [pane_id]    lower one step, stops at 0 (paused)
+#   agent-priority.sh set <0-5> [pane_id]
+#   agent-priority.sh clear [pane_id]   back to 1, unranked
 #   agent-priority.sh clear-many <file>  clear the ranks of the live
 #                                               panes named in <file>, one per
 #                                               line, tab-delimited field 1 —
@@ -25,11 +25,22 @@
 # you work top down and spend the day on what matters. Priority 1 work never
 # getting reached is the feature, not a bug — it is the signal to close it.
 #
-# THREE IS UNSET, DELIBERATELY. up and down step through 1..5 and clamp at the
-# ends, and landing on 3 removes the token rather than writing "P3". Unset
-# already sorts as 3, so the two states mean the same thing, and not stamping it
-# keeps thirty-odd unranked rows clean instead of labelling every one of them
-# with a number that says nothing.
+# THE SCALE IS 0-5, AND 1 IS UNSET. Every agent starts on 1, the bottom of the
+# working scale, because in practice nothing is ever ranked *below* where it
+# started: a scale centred on the default (the old 1-5 with 3 as unset) left
+# half of it unused and crowded the real work into the two steps above. Now
+# 2-5 are four steps of "more important than the rest". up and down clamp at
+# 5 and 0, and landing on 1 removes the label rather than writing "P1" — unset
+# already sorts as 1, so the two states mean the same thing, and not stamping it
+# keeps thirty-odd unranked rows clean.
+#
+# 0 IS PAUSED: parked until you say otherwise, the open-ended sibling of
+# snooze. A paused agent sorts below everything and alt+g never lands on it.
+# It is a rank rather than a snooze rung because it is about the work, not
+# about timing: the snooze store is for "back in 30 minutes".
+#
+# The store changed meaning with the scale, so a store written by the 1-5
+# version is converted once (migrate_store, marked by $SCALE_MARK).
 #
 # WHY A STORE AND NOT JUST THE TOKEN. The priority is displayed as a pane
 # metadata token ($pri in [ui.sidebar.agents]), a display-only side channel that
@@ -49,12 +60,12 @@
 #
 # TWO TOKENS, ONE VISIBLE. $pri carries the label and is only set when you have
 # actually ranked something, so thirty untriaged rows stay clean. $prisort is
-# stamped on EVERY agent, defaulting to 3, and is never referenced by the
+# stamped on EVERY agent, defaulting to 1, and is never referenced by the
 # sidebar template, so it is invisible. It exists because the sidebar sort is a
 # string sort over a token: with $pri alone the unranked rows have no value at
-# all and sink to the bottom, which would put a deliberate "1, I am not doing
-# this" above an untriaged agent. Sorting on a token that is always present puts
-# unset exactly where it belongs, in the middle.
+# all and sink to the bottom, below a deliberately paused P0. Sorting on a
+# token that is always present puts unset where it belongs, just above paused.
+# (Single digits, so the string sort is also the numeric one.)
 #
 # THE SORT ITSELF is herdr's declarative agent view (agent.view.set), which
 # accepts `{"field": {"token": "prisort"}}` as a sort key. Setting a view with a
@@ -68,7 +79,8 @@
 set -eu
 
 SOURCE=agent-priority
-DEFAULT=3
+DEFAULT=1
+PAUSED=0
 # State lives where herdr says: HERDR_PLUGIN_STATE_DIR is set for every plugin
 # command (startup, events, actions, the picker pane) and is
 # ${XDG_STATE_HOME:-~/.local/state}/herdr/plugins/agent-priority. The fallback,
@@ -82,6 +94,7 @@ SELECTION="$STATE_DIR/agent-priority.selection"
 LOG="$STATE_DIR/agent-priority.log"
 NOTIFY_ID="$STATE_DIR/agent-priority.notify-id"
 LOCK="$STATE_DIR/agent-priority.lock"
+SCALE_MARK="$STATE_DIR/agent-priority.scale"
 SNZ_SOURCE=agent-snooze
 TICKER_LOCK="$STATE_DIR/agent-snooze.ticker.lock"
 
@@ -185,7 +198,9 @@ pane_title() { # pane_title <pane_id>
 notify() { # notify <pane_id> <priority|"">
   title=$(pane_title "$1")
   [ -n "$title" ] || title="$1"
-  if [ -n "$2" ]; then
+  if [ "$2" = "$PAUSED" ]; then
+    toast "Paused" "$title"
+  elif [ -n "$2" ]; then
     toast "Priority $2" "$title"
   else
     toast "Priority cleared" "$title"
@@ -628,7 +643,7 @@ rank_write() { # rank_write <pane_id> <priority|"">
   }
 }
 
-# Batch clear for the picker's alt+0 sweep, run under `locked` as a plain
+# Batch clear for the picker's alt+c sweep, run under `locked` as a plain
 # command like rank_write. Snapshots which of the given (already-live-checked)
 # panes currently carry a rank, rewrites the store once, then stamps each
 # cleared pane individually.
@@ -664,17 +679,39 @@ clear_many_write() { # clear_many_write <live pane ids, space/newline separated>
 
 rank_step() { # rank_step <pane_id> <up|down>; sets $next
   cur=$(stored "$1")
-  case $cur in 1 | 2 | 3 | 4 | 5) ;; *) cur=$DEFAULT ;; esac
+  case $cur in 0 | 1 | 2 | 3 | 4 | 5) ;; *) cur=$DEFAULT ;; esac
   crit_delay
   if [ "$2" = up ]; then
     next=$((cur + 1))
     [ "$next" -le 5 ] || next=5
   else
     next=$((cur - 1))
-    [ "$next" -ge 1 ] || next=1
+    [ "$next" -ge "$PAUSED" ] || next=$PAUSED
   fi
   [ "$next" != "$DEFAULT" ] || next=''
   rank_write "$1" "$next"
+}
+
+# ONE-TIME CONVERSION from the 1-5 scale (3 = unset), run under `locked` by
+# every invocation until $SCALE_MARK exists. Only the ranks above the old
+# default carry over, keeping their order and landing just above the new one:
+# 4 -> 2, 5 -> 3, which leaves 4 and 5 free above today's top band. Old 1-3
+# become unranked: below-default was never used, and 3 was already unset.
+# Re-checked under the lock, so two first runs convert once. The tokens are
+# then re-projected by prune, which restamps every pane whose prisort no
+# longer matches the store — i.e. all of them.
+migrate_store() {
+  [ ! -f "$SCALE_MARK" ] || return 0
+  if [ -s "$STORE" ]; then
+    tmp=$(mktemp "$STORE.XXXXXX")
+    awk -F'\t' -v OFS='\t' '$2 == 4 { print $1, 2 } $2 == 5 { print $1, 3 }' "$STORE" >"$tmp"
+    mv "$tmp" "$STORE"
+    log "migrate: converted the 1-5 store to 0-5 ($(grep -c '' "$STORE") ranked)"
+    printf '0-5\n' >"$SCALE_MARK"
+    prune
+  else
+    printf '0-5\n' >"$SCALE_MARK"
+  fi
 }
 
 apply() { # apply <pane_id> <priority|"">
@@ -717,8 +754,9 @@ focus_pane() { # focus_pane <pane_id>
 # "everything of yours that is not currently running", which does not depend on
 # the acknowledgement rule at all, and let the fork be dropped.
 #
-# `working` and snoozed panes are excluded now. A working agent genuinely
-# wants nothing, and a snoozed one has said "not right now".
+# `working`, snoozed and paused (P0) panes are excluded. A working agent
+# genuinely wants nothing, a snoozed one has said "not right now", and a
+# paused one "not until I say so".
 #
 # That last key is load-bearing, not decoration. Most agents sit at the default
 # rank, so without a deterministic tiebreak the head of the queue shuffles as
@@ -745,7 +783,8 @@ queue() {
           status: .agent_status,
           title: (.terminal_title_stripped // .terminal_title // ""),
           seq: .state_change_seq,
-          pri: (((.tokens.pri // "") | ltrimstr("P") | tonumber?) // $def) } ]
+          pri: (((.tokens.pri // "") | ltrimstr("P") | tonumber?) // $def) }
+      | select(.pri > 0) ]
     | sort_by(-.pri,
         (if .status == "blocked" then 0 elif .status == "done" then 1 else 2 end),
         .seq)
@@ -829,9 +868,12 @@ rows() {
 SELF="${HERDR_PLUGIN_ROOT:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}/agent-priority.sh"
 
 cmd=${1:-}
-[ -n "$cmd" ] || die "usage: $0 {up|down|set <1-5>|clear|clear-many <file>|snooze|goto|pick|rows|stamp|list} [pane_id]"
+[ -n "$cmd" ] || die "usage: $0 {up|down|set <0-5>|clear|clear-many <file>|snooze|goto|pick|rows|stamp|list} [pane_id]"
 shift
 log "run $cmd $* (herdr=$(command -v herdr || echo MISSING))"
+# Not from the ticker: it only touches the snooze store, and the long-lived
+# process must never die on a busy lock (see tick_locked).
+[ "$cmd" = ticker ] || [ -f "$SCALE_MARK" ] || locked migrate_store
 
 case $cmd in
 up | down)
@@ -844,9 +886,11 @@ up | down)
 set)
   n=${1:-}
   case $n in
-  1 | 2 | 3 | 4 | 5) ;;
-  *) die "priority must be 1-5" ;;
+  0 | 1 | 2 | 3 | 4 | 5) ;;
+  *) die "priority must be 0-5" ;;
   esac
+  # 1 is unset: stored as no line and shown as no label, same as `clear`.
+  [ "$n" != "$DEFAULT" ] || n=''
   pane=$(target_pane "${2:-}")
   [ -n "$pane" ] || exit 0
   apply "$pane" "$n"
@@ -859,7 +903,7 @@ clear)
   ;;
 
 clear-many)
-  # Driven by the picker's alt+0: <file> is fzf's {*f} for the current query
+  # Driven by the picker's alt+c: <file> is fzf's {*f} for the current query
   # — the FULL matched rows, one per line, each pane_id<TAB>display-text (the
   # display half carries the ANSI colour codes rows() emits, and may itself
   # contain spaces; only the id is used). {*1f} looks like the right tool
@@ -992,7 +1036,7 @@ rows)
 
 pick)
   # Runs inside the plugin popup, which gets every keystroke including Escape.
-  # alt+1-5 re-rank the highlighted row in place and reload the list, so the
+  # alt+0-5 re-rank the highlighted row in place and reload the list, so the
   # popup is both the view and the way to set a priority without leaving it.
   #
   # Typing always filters; every command is an alt chord, so no letter or digit
@@ -1005,7 +1049,7 @@ pick)
   # out from under the cursor and the next alt+shift+p hits a different agent.
   # fzf's default for ctrl-bspace deletes one character, hence the rebind.
   #
-  # SET-AND-ADVANCE. alt+1-5's chain is execute-silent(...)+down+reload(...):
+  # SET-AND-ADVANCE. alt+0-5's chain is execute-silent(...)+down+reload(...):
   # `down` moves the cursor before `reload` runs, so --track's id-nth capture
   # happens against the row that was *below* the one just ranked, not the one
   # just moved away by the re-sort. fzf's man page: "Multiple actions can be
@@ -1023,7 +1067,7 @@ pick)
   # in place and repeated presses must keep hitting the same row, which is
   # exactly what dropping the extra `down` preserves.
   #
-  # alt+0 clears every row the current query matches, not just the
+  # alt+c clears every row the current query matches, not just the
   # highlighted one: {*f} is fzf's all-matched-items placeholder ("a
   # placeholder expression starting with * flag will be replaced to the
   # space-separated list of all matched items individually quoted",
@@ -1031,7 +1075,9 @@ pick)
   # file instead of inlining it ("a placeholder expression with f flag is
   # replaced to the path of a temporary file that holds the evaluated
   # list") — {*f}'s own man-page example. An empty query matches every row,
-  # so alt+0 with nothing typed clears everyone.
+  # so alt+c with nothing typed clears everyone.
+  # (It was alt+0 on the 1-5 scale; alt+0 now means paused, like the other
+  # digits mean their rank.)
   #
   # NOT {*1f}. Narrowing to field 1 first looks like the obvious move — the
   # file would then hold bare pane ids — but measured against real fzf
@@ -1053,17 +1099,18 @@ pick)
     --delimiter='\t' --with-nth=2.. --no-sort --cycle --ansi \
     --track --id-nth=1 \
     --prompt='agent > ' \
-    --header='enter jump  ·  alt+p/alt+shift+p nudge  ·  alt+z snooze  ·  alt+1-5 rank (3 = unranked)  ·  alt+0 clear matched  ·  esc close' \
+    --header='enter jump  ·  alt+p/alt+shift+p nudge  ·  alt+z snooze  ·  alt+0-5 rank (0 = paused, 1 = unranked)  ·  alt+c clear matched  ·  esc close' \
     --bind='ctrl-bspace:backward-kill-word' \
-    --bind="alt-1:execute-silent($q set 1 {1})+down+reload($q rows)" \
+    --bind="alt-0:execute-silent($q set 0 {1})+down+reload($q rows)" \
+    --bind="alt-1:execute-silent($q clear {1})+down+reload($q rows)" \
     --bind="alt-2:execute-silent($q set 2 {1})+down+reload($q rows)" \
-    --bind="alt-3:execute-silent($q clear {1})+down+reload($q rows)" \
+    --bind="alt-3:execute-silent($q set 3 {1})+down+reload($q rows)" \
     --bind="alt-4:execute-silent($q set 4 {1})+down+reload($q rows)" \
     --bind="alt-5:execute-silent($q set 5 {1})+down+reload($q rows)" \
     --bind="alt-p:execute-silent($q up {1})+reload($q rows)" \
     --bind="alt-P:execute-silent($q down {1})+reload($q rows)" \
     --bind="alt-z:execute-silent($q snooze {1})+reload($q rows)" \
-    --bind="alt-0:execute-silent($q clear-many {*f})+reload($q rows)" || true)
+    --bind="alt-c:execute-silent($q clear-many {*f})+reload($q rows)" || true)
   [ -n "$sel" ] || exit 0
   target=$(printf '%s\n' "$sel" | cut -f1)
   [ -n "$target" ] || exit 0

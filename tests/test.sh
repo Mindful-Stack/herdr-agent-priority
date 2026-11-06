@@ -72,6 +72,12 @@ fixture() { # fixture <jq filter>: rewrite the agent list in place
   jq "$1" "$FIXTURE_DIR/agents.json" >"$FIXTURE_DIR/a.tmp"
   mv "$FIXTURE_DIR/a.tmp" "$FIXTURE_DIR/agents.json"
 }
+# Seeded rank stores are already on the 0-5 scale: mark them so, or the
+# one-time 1-5 migration would rewrite them on the next run.
+mark_scale() {
+  mkdir -p "$(dirname "$(state agent-priority.scale)")"
+  printf '0-5\n' >"$(state agent-priority.scale)"
+}
 queue_ids() { run list | awk '{ print $3 }' | tr '\n' ' ' | sed 's/ $//'; }
 seed_snooze() { # seed_snooze <pane> <seconds from now, may be negative> <step>
   mkdir -p "$(dirname "$(state agent-snooze)")"
@@ -171,16 +177,16 @@ setup
 AGENT_PRIORITY_CRIT_DELAY=0.3
 export AGENT_PRIORITY_CRIT_DELAY
 run up w1:p2 & run up w1:p2 & run up w1:p2 & wait
-check "three concurrent ups from unranked land on 5" \
-  "w1:p2	5" "$(cat "$(state agent-priority)")"
+check "three concurrent ups from unranked land on 4" \
+  "w1:p2	4" "$(cat "$(state agent-priority)")"
 
 # The metadata stamp is inside the lock (Task 2 Step 7's spec change), so the
-# sidebar token is written in the same order as the store: 4, then 5, then 5
-# again. Stamped outside the lock, the three processes' `report-metadata`
-# calls would race independently of their store writes and could land as
-# 4 5 5, 5 4 5 or any other order — this would have failed against that bug.
-check "metadata stamps land in store-write order (4 5 5)" \
-  "4 5 5" \
+# sidebar token is written in the same order as the store: 2, 3, then 4.
+# Stamped outside the lock, the three processes' `report-metadata` calls
+# would race independently of their store writes and could land as 2 4 3,
+# 3 2 4 or any other order — this would have failed against that bug.
+check "metadata stamps land in store-write order (2 3 4)" \
+  "2 3 4" \
   "$(grep -o 'prisort=[0-9]*' "$FIXTURE_DIR/metadata.log" | cut -d= -f2 | tr '\n' ' ' | sed 's/ $//')"
 
 # --- explicit pane ids are validated -----------------------------------------
@@ -312,7 +318,7 @@ printf 'w1:p1\t%s\t5\n' $(( $(date +%s) - 1 )) >"$(state agent-snooze)"
 check "an expired snooze is back in the queue" "w1:p1 w1:p4 w1:p2" "$(queue_ids)"
 
 setup
-# Base fixture as-is: w1:p2 (idle, P3) is focused, outside the P5 band, so
+# Base fixture as-is: w1:p2 (idle, unranked) is focused, outside the P5 band, so
 # goto's "step off the currently-focused band member" logic can't produce
 # w1:p4 on its own — only the queue-level snooze filter can. Without the
 # filter, goto from outside the band lands on the band's first member, the
@@ -386,13 +392,14 @@ mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
   printf 'w1:p1\t5\n'
   printf 'w9:gone\t5\n'
 } >"$(state agent-priority)"
+mark_scale
 run stamp
 check "stamp keeps only live ranks" "w1:p1" "$(cut -f1 "$(state agent-priority)")"
 
 # --- stamp reconciles prisort only where it is wrong -------------------------
-# Base fixture: w1:p1/p3/p4 already carry prisort=5, w1:p2 carries prisort=3.
+# Base fixture: w1:p1/p3/p4 already carry prisort=5, w1:p2 carries prisort=1.
 # With an empty rank store every one of them is "wrong" except w1:p2, which
-# already reads the unranked default (3) that an empty store implies — so
+# already reads the unranked default (1) that an empty store implies — so
 # only p1, p3, p4 should get a fresh report-metadata call.
 setup
 run stamp
@@ -443,6 +450,7 @@ for mode in exit errjson empty; do
   set_snz w1:p2 "zz 3m"
   mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
   printf 'w1:p1\t5\n' >"$(state agent-priority)"
+  mark_scale
   printf 'w1:p1\t%s\t5\n' $(( $(date +%s) + 600 )) >"$(state agent-snooze)"
   HERDR_STUB_FAIL_PANE_LIST=$mode run stamp
   check "stamp ($mode pane list) leaves the rank store untouched" \
@@ -467,7 +475,7 @@ check "snoozed row shows its wake time" "yes" \
 # --- plugin environment (Task 8) -------------------------------------------------
 setup
 HERDR_PLUGIN_STATE_DIR="$T/pstate" sh "$SCRIPT" up w1:p2 || true
-check "state goes to HERDR_PLUGIN_STATE_DIR when herdr sets it" "w1:p2	4" \
+check "state goes to HERDR_PLUGIN_STATE_DIR when herdr sets it" "w1:p2	2" \
   "$(cat "$T/pstate/agent-priority" 2>/dev/null)"
 check "and nothing is written to the fallback then" "no" \
   "$([ -e "$XDG_STATE_HOME/herdr-agent-priority" ] && echo yes || echo no)"
@@ -476,7 +484,7 @@ setup
 mkdir -p "$XDG_STATE_HOME/herdr"
 printf 'w1:p1\t5\n' >"$XDG_STATE_HOME/herdr/agent-priority"   # the old rank FILE
 run up w1:p2
-check "the fallback never collides with the old rank file" "w1:p2	4" "$(cat "$(state agent-priority)")"
+check "the fallback never collides with the old rank file" "w1:p2	2" "$(cat "$(state agent-priority)")"
 
 setup
 HERDR_PLUGIN_ROOT="$T/root" sh "$SCRIPT" pick || true
@@ -711,6 +719,7 @@ cm_file() { # cm_file <lines...>: write each arg as a line to a fresh temp file,
 setup
 mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 printf 'w1:p1\t5\nw1:p3\t4\n' >"$(state agent-priority)"
+mark_scale
 cmf=$(cm_file w1:p1 w1:p3 w1:p2 w9:gone)
 run clear-many "$cmf"
 check "clear-many drops both ranked panes from the store" "" \
@@ -734,9 +743,10 @@ AGENT_PRIORITY_CRIT_DELAY=0.3
 export AGENT_PRIORITY_CRIT_DELAY
 mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 printf 'w1:p1\t5\n' >"$(state agent-priority)"
+mark_scale
 cmf=$(cm_file w1:p1)
 run up w1:p4 & run clear-many "$cmf" & wait
-check "concurrent up and clear-many: the up is not lost" "4" \
+check "concurrent up and clear-many: the up is not lost" "2" \
   "$(awk -F'\t' '$1 == "w1:p4" { print $2 }' "$(state agent-priority)")"
 check "concurrent up and clear-many: the clear is not lost" "" \
   "$(awk -F'\t' '$1 == "w1:p1"' "$(state agent-priority)")"
@@ -748,6 +758,7 @@ unset AGENT_PRIORITY_CRIT_DELAY
 setup
 mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 printf 'w1:p1\t5\n' >"$(state agent-priority)"
+mark_scale
 cmf=$(cm_file w1:p1)
 run clear-many "$cmf"
 check "clear-many toasts the singular for exactly one clear" "yes" \
@@ -792,6 +803,7 @@ check "clear-many on a missing file writes nothing to the store" "" \
 setup
 mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
 printf 'w1:p1\t5\nw1:p3\t4\n' >"$(state agent-priority)"
+mark_scale
 cmf="$T/cm-fullrows.txt"
 {
   printf 'w1:p1\t\033[1mP4\033[0m \033[36mdone\033[0m  alpha\n'
@@ -809,11 +821,11 @@ check "clear-many with full-row input toasts the count" "yes" \
 # --- picker bind strings (Task 6b) --------------------------------------------
 # Distinguishes: alt+1-5 chain a `down` before their `reload` (set-and-advance);
 # alt+p/alt+shift+p/alt+z do not (nudge/snooze must keep hitting the same row);
-# alt+0 sweeps via clear-many over fzf's all-matched file placeholder rather
+# alt+c sweeps via clear-many over fzf's all-matched file placeholder rather
 # than acting on the single highlighted row.
 setup
 binds=$(sed -n '/^pick)/,/^  ;;/p' "$SCRIPT")
-for n in 1 2 3 4 5; do
+for n in 0 1 2 3 4 5; do
   check "alt-$n chains down before reload (set-and-advance)" "yes" \
     "$(printf '%s\n' "$binds" | grep "alt-$n:" | grep -qF '+down+reload' && echo yes || echo no)"
 done
@@ -825,10 +837,10 @@ check "alt-z does not chain down" "yes" \
   "$(printf '%s\n' "$binds" | grep 'alt-z:' | grep -qv '+down' && echo yes || echo no)"
 # {*f}, not {*1f}: field-1 narrowing (below) does not survive real fzf, so the
 # bind must use the plain all-matched file flag and let clear-many do the cut.
-check "alt-0 sweeps via clear-many over the all-matched file placeholder {*f}" "yes" \
-  "$(printf '%s\n' "$binds" | grep -qF 'alt-0:execute-silent($q clear-many {*f})' && echo yes || echo no)"
-check "alt-0's placeholder is not the unexpandable {*1f}" "no" \
-  "$(printf '%s\n' "$binds" | grep -qF 'alt-0:execute-silent($q clear-many {*1f})' && echo yes || echo no)"
+check "alt-c sweeps via clear-many over the all-matched file placeholder {*f}" "yes" \
+  "$(printf '%s\n' "$binds" | grep -qF 'alt-c:execute-silent($q clear-many {*f})' && echo yes || echo no)"
+check "alt-c's placeholder is not the unexpandable {*1f}" "no" \
+  "$(printf '%s\n' "$binds" | grep -qF 'alt-c:execute-silent($q clear-many {*1f})' && echo yes || echo no)"
 
 # --- alt-0's placeholder against REAL fzf (Task 6b review fix) ---------------
 # fzf 0.74.3 does not expand {*1f} at all — it passes the literal five
@@ -850,7 +862,7 @@ check "alt-0's placeholder is not the unexpandable {*1f}" "no" \
 # `timeout` (a syscall-level watchdog, not a sleep) to bound the run instead.
 if [ -n "$REAL_FZF" ] && [ -n "$REAL_SCRIPT" ]; then
   setup
-  placeholder=$(printf '%s\n' "$binds" | grep 'alt-0:' | \
+  placeholder=$(printf '%s\n' "$binds" | grep 'alt-c:' | \
     sed -n 's/.*clear-many \({[^)]*}\)).*/\1/p')
   rowsfile="$T/fzf-rows.txt"
   printf 'w1:p1\tP4 alpha\nw1:p2\t-- beta\nw1:p3\tP4 gamma\n' >"$rowsfile"
@@ -863,7 +875,7 @@ if [ -n "$REAL_FZF" ] && [ -n "$REAL_SCRIPT" ]; then
   check "real fzf: alt-0's placeholder ($placeholder) resolves to the matched pane ids" \
     "w1:p1 w1:p3" "$got"
 else
-  echo "skip  real fzf: alt-0 placeholder check (fzf and/or script not on PATH)"
+  echo "skip  real fzf: alt-c placeholder check (fzf and/or script not on PATH)"
 fi
 
 # --- picker binds survive a path with spaces and quotes (Task 9) --------------------
@@ -897,15 +909,74 @@ check "alt-5's reload command lists the rows" "yes" \
 # here), so the test stands in for fzf and swaps it for a real temp file of
 # matched rows itself — the same id<TAB>display shape clear-many expects.
 printf 'w1:p3\t4\n' >>"$(state agent-priority)"
+mark_scale
 cmf="$T/cm-rows.txt"
 printf 'w1:p3\tdummy display\n' >"$cmf"
-bind0=$(grep '^--bind=alt-0:' "$FIXTURE_DIR/fzf.args" | sed 's/^--bind=alt-0://')
+bind0=$(grep '^--bind=alt-c:' "$FIXTURE_DIR/fzf.args" | sed 's/^--bind=alt-c://')
 exe0=$(printf '%s\n' "$bind0" | sed -n 's/^execute-silent(\(.*\))+reload(.*)$/\1/p' | sed "s|{\*f}|$cmf|")
 sh -c "$exe0" 2>/dev/null || true
-check "alt-0's clear-many command runs from a spaced, quoted path" "" \
+check "alt-c's clear-many command runs from a spaced, quoted path" "" \
   "$(awk -F'\t' '$1 == "w1:p3"' "$(state agent-priority)")"
-check "alt-0's clear-many command leaves alt-5's earlier write alone" "w1:p2	5" \
+check "alt-c's clear-many command leaves alt-5's earlier write alone" "w1:p2	5" \
   "$(awk -F'\t' '$1 == "w1:p2"' "$(state agent-priority)")"
+
+# --- the 0-5 scale: 1 is unset, 0 is paused ---------------------------------
+setup
+run down w1:p2
+check "down from unranked pauses (0)" "w1:p2	0" "$(cat "$(state agent-priority)")"
+check "a pause is stamped as P0 / prisort 0" "yes" \
+  "$(grep -qF 'pane report-metadata w1:p2 --source agent-priority --token pri=P0 --token prisort=0' "$FIXTURE_DIR/metadata.log" && echo yes || echo no)"
+check "a pause toasts Paused" "yes" \
+  "$(grep -qF 'Paused' "$FIXTURE_DIR/toasts.log" && echo yes || echo no)"
+run down w1:p2
+check "down clamps at 0" "w1:p2	0" "$(cat "$(state agent-priority)")"
+run up w1:p2
+check "up from paused is unranked again: no store line" "" "$(cat "$(state agent-priority)")"
+check "and the label is cleared, prisort back to 1" "yes" \
+  "$(tail -n1 "$FIXTURE_DIR/metadata.log" | grep -qF -- '--clear-token pri --token prisort=1' && echo yes || echo no)"
+
+setup
+run set 1 w1:p2
+check "set 1 is the same as clear: no store line" "" "$(cat "$(state agent-priority)")"
+run set 0 w1:p2
+check "set 0 pauses" "w1:p2	0" "$(cat "$(state agent-priority)")"
+code=0; sh "$SCRIPT" set 6 w1:p2 2>/dev/null || code=$?
+check "set 6 is refused" "2" "$code"
+
+setup
+for _ in 1 2 3 4 5; do run up w1:p2; done
+check "up clamps at 5" "w1:p2	5" "$(cat "$(state agent-priority)")"
+
+setup
+fixture '.result.agents |= map(if .pane_id == "w1:p1" then .tokens = {"pri":"P0","prisort":"0"} else . end)'
+check "a paused pane is not in the queue" "w1:p4 w1:p2" "$(queue_ids)"
+rows_plain=$(run rows | sed 's/\x1b\[[0-9;]*m//g')
+check "a paused pane sorts last in the picker" "w1:p1" \
+  "$(printf '%s\n' "$rows_plain" | tail -n1 | cut -f1)"
+
+# --- one-time migration from the 1-5 scale ------------------------------------
+setup
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
+printf 'w1:p1\t5\nw1:p2\t2\nw1:p3\t4\nw1:p4\t3\nw9:gone\t5\n' >"$(state agent-priority)"
+# Tokens as the 1-5 version left them: unranked w1:p2 sorted on 3.
+fixture '.result.agents |= map(if .pane_id == "w1:p2" then .tokens.prisort = "3" else . end)'
+run list >/dev/null
+check "migration maps 5->3 and 4->2, drops 1-3, and prunes gone panes" "w1:p1	3 w1:p3	2" \
+  "$(sort "$(state agent-priority)" | tr '\n' ' ' | sed 's/ $//')"
+check "migration leaves the scale mark" "0-5" "$(cat "$(state agent-priority.scale)" 2>/dev/null)"
+check "migration restamps every pane whose prisort moved" "w1:p1 w1:p2 w1:p3 w1:p4" \
+  "$(awk '/--source agent-priority/ { print $3 }' "$FIXTURE_DIR/metadata.log" | sort | tr '\n' ' ' | sed 's/ $//')"
+check "migration is logged" "yes" \
+  "$(grep -qF 'migrate: converted the 1-5 store' "$(state agent-priority.log)" && echo yes || echo no)"
+: >"$FIXTURE_DIR/metadata.log"
+run up w1:p1
+check "after migrating once, nothing is migrated again" "w1:p1	4" \
+  "$(awk -F'\t' '$1 == "w1:p1"' "$(state agent-priority)")"
+
+setup
+run list >/dev/null
+check "a fresh install just leaves the mark" "0-5" "$(cat "$(state agent-priority.scale)" 2>/dev/null)"
+check "a fresh install writes no metadata" "" "$(cat "$FIXTURE_DIR/metadata.log")"
 
 # --- manifest and README agree with the tested config (Task 11) ---------------------
 # Every plugin_action key in tests/config.toml names an action the manifest
