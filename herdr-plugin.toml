@@ -51,6 +51,13 @@ title = "Clear agent priority"
 contexts = ["pane"]
 command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/agent-priority.sh\" clear"]
 
+# One rank above every other agent: "this is the main task now", in one key.
+[[actions]]
+id = "top"
+title = "Rank above every other agent"
+contexts = ["pane"]
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/agent-priority.sh\" top"]
+
 [[actions]]
 id = "snooze"
 title = "Snooze agent (5m/30m/2h/4h/off)"

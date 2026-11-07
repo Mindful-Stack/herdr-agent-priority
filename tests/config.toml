@@ -16,6 +16,12 @@ description = "Lower agent priority"
 [[keys.command]]
 key = "ctrl+alt+p"
 type = "plugin_action"
+command = "agent-priority.top"
+description = "Rank above every other agent"
+
+[[keys.command]]
+key = "ctrl+alt+shift+p"
+type = "plugin_action"
 command = "agent-priority.clear"
 description = "Clear agent priority"
 
