@@ -954,6 +954,46 @@ rows_plain=$(run rows | sed 's/\x1b\[[0-9;]*m//g')
 check "a paused pane sorts last in the picker" "w1:p1" \
   "$(printf '%s\n' "$rows_plain" | tail -n1 | cut -f1)"
 
+# --- top: one rank above every other live agent ------------------------------
+setup
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
+printf 'w1:p1\t3\nw1:p3\t2\nw9:gone\t4\n' >"$(state agent-priority)"
+mark_scale
+run top w1:p2
+check "top lands one above the highest other live rank (gone panes ignored)" "4" \
+  "$(awk -F'\t' '$1 == "w1:p2" { print $2 }' "$(state agent-priority)")"
+check "top toasts the new rank" "yes" \
+  "$(grep -qF 'Priority 4 · on top' "$FIXTURE_DIR/toasts.log" && echo yes || echo no)"
+check "top leaves every other rank alone" "w1:p1	3 w1:p3	2" \
+  "$(awk -F'\t' '$1 != "w1:p2"' "$(state agent-priority)" | grep -v gone | sort | tr '\n' ' ' | sed 's/ $//')"
+run top w1:p2
+check "top on the agent already alone on top keeps it there" "4" \
+  "$(awk -F'\t' '$1 == "w1:p2" { print $2 }' "$(state agent-priority)")"
+check "and says so" "yes" \
+  "$(tail -n1 "$FIXTURE_DIR/toasts.log" | grep -qF 'Already on top · P4' && echo yes || echo no)"
+
+setup
+run top w1:p2
+check "top with nothing else ranked lands on 2" "w1:p2	2" "$(cat "$(state agent-priority)")"
+
+setup
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
+printf 'w1:p1\t5\n' >"$(state agent-priority)"
+mark_scale
+run top w1:p2
+check "top with the others at 5 joins them at 5" "5" \
+  "$(awk -F'\t' '$1 == "w1:p2" { print $2 }' "$(state agent-priority)")"
+check "and says the top is shared" "yes" \
+  "$(grep -qF 'Priority 5 · shared with the top band' "$FIXTURE_DIR/toasts.log" && echo yes || echo no)"
+
+setup
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
+printf 'w1:p2\t0\nw1:p1\t2\n' >"$(state agent-priority)"
+mark_scale
+run top w1:p2
+check "top un-pauses straight to the top" "3" \
+  "$(awk -F'\t' '$1 == "w1:p2" { print $2 }' "$(state agent-priority)")"
+
 # --- one-time migration from the 1-5 scale ------------------------------------
 setup
 mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"

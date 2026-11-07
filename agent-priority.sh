@@ -5,6 +5,7 @@
 #   agent-priority.sh down [pane_id]    lower one step, stops at 0 (paused)
 #   agent-priority.sh set <0-5> [pane_id]
 #   agent-priority.sh clear [pane_id]   back to 1, unranked
+#   agent-priority.sh top [pane_id]     one above every other live agent, stops at 5
 #   agent-priority.sh clear-many <file>  clear the ranks of the live
 #                                               panes named in <file>, one per
 #                                               line, tab-delimited field 1 —
@@ -714,6 +715,37 @@ migrate_store() {
   fi
 }
 
+# TOP. "This is the one thing now": one rank above the highest any OTHER live
+# agent holds, so it sits alone above the current top band. Importance, not
+# status — working and snoozed agents count, since their rank is still what
+# you said they are worth. Two edges, both reported rather than papered over:
+#   already above everyone else  -> left as it is ($top_note=already)
+#   the others already hold 5    -> joins them at 5 ($top_note=shared). It
+#     never pushes anyone else down: re-ranking agents you did not touch is
+#     exactly the silent change the store-and-lock design exists to prevent.
+# The live ids are read before the lock (an agent list inside it could hang
+# every keypress), so a store line for a gone pane cannot lift the bar.
+top_step() { # top_step <pane_id> <live ids, space separated>; sets $next, $top_note
+  cur=$(stored "$1")
+  [ -n "$cur" ] || cur=$DEFAULT
+  best=$(awk -F'\t' -v p="$1" -v live=" $2 " \
+    '$1 != p && index(live, " " $1 " ") && $2 + 0 > m { m = $2 + 0 } END { print m + 0 }' "$STORE")
+  [ "$best" -ge "$DEFAULT" ] || best=$DEFAULT
+  crit_delay
+  top_note=''
+  if [ "$cur" -gt "$best" ]; then
+    next=$cur
+    top_note=already
+  else
+    next=$((best + 1))
+    if [ "$next" -gt 5 ]; then
+      next=5
+      top_note=shared
+    fi
+  fi
+  rank_write "$1" "$next"
+}
+
 apply() { # apply <pane_id> <priority|"">
   locked rank_write "$1" "$2"
   notify "$1" "$2"
@@ -868,7 +900,7 @@ rows() {
 SELF="${HERDR_PLUGIN_ROOT:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}/agent-priority.sh"
 
 cmd=${1:-}
-[ -n "$cmd" ] || die "usage: $0 {up|down|set <0-5>|clear|clear-many <file>|snooze|goto|pick|rows|stamp|list} [pane_id]"
+[ -n "$cmd" ] || die "usage: $0 {up|down|set <0-5>|clear|top|clear-many <file>|snooze|goto|pick|rows|stamp|list} [pane_id]"
 shift
 log "run $cmd $* (herdr=$(command -v herdr || echo MISSING))"
 # Not from the ticker: it only touches the snooze store, and the long-lived
@@ -900,6 +932,21 @@ clear)
   pane=$(target_pane "${1:-}")
   [ -n "$pane" ] || exit 0
   apply "$pane" ""
+  ;;
+
+top)
+  pane=$(target_pane "${1:-}")
+  [ -n "$pane" ] || exit 0
+  live=$(herdr agent list | jq -r '[.result.agents[].pane_id] | join(" ")') ||
+    { log "top: agent list failed"; exit 0; }
+  locked top_step "$pane" "$live"
+  title=$(pane_title "$pane")
+  [ -n "$title" ] || title="$pane"
+  case $top_note in
+  already) toast "Already on top · P$next" "$title" ;;
+  shared) toast "Priority 5 · shared with the top band" "$title" ;;
+  *) toast "Priority $next · on top" "$title" ;;
+  esac
   ;;
 
 clear-many)

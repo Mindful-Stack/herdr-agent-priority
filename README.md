@@ -35,6 +35,12 @@ description = "Lower agent priority"
 [[keys.command]]
 key = "ctrl+alt+p"
 type = "plugin_action"
+command = "agent-priority.top"
+description = "Rank above every other agent"
+
+[[keys.command]]
+key = "ctrl+alt+shift+p"
+type = "plugin_action"
 command = "agent-priority.clear"
 description = "Clear agent priority"
 
@@ -76,7 +82,8 @@ config: the plugin sets herdr's agent view to sort by rank. (`ui.agent_panel_sor
 | --- | --- |
 | `alt+p` | Raise the focused agent's rank one step (stops at 5). |
 | `alt+shift+p` | Lower it one step; below unranked it is paused (0). |
-| `ctrl+alt+p` | Clear it back to unranked (1), from any rank. |
+| `ctrl+alt+p` | Put it one rank above every other agent: "this is the main task now". |
+| `ctrl+alt+shift+p` | Clear it back to unranked (1), from any rank. |
 | `alt+z` | Snooze it: 5m, 30m, 2h, 4h, off — one step per press. |
 | `alt+g` | Go to the top of the ranking, cycling within the top band. |
 | `prefix+p` | Open the ranked picker. |
@@ -113,7 +120,7 @@ or two agents wide instead of filling up.
 
 **Zero is paused** — parked until you say otherwise. A paused agent shows
 `P0`, sorts below everything, and `alt+g` never lands on it. Press `alt+p` (or
-`ctrl+alt+p`) to bring it back. For "back in half an hour", snooze instead.
+`ctrl+alt+shift+p`) to bring it back. For "back in half an hour", snooze instead.
 
 Upgrading from the 1–5 scale (where three was unranked) converts the ranks
 once, on the first run: 5 → 3 and 4 → 2, so today's order is kept with 4 and 5
@@ -127,6 +134,15 @@ pressing past what you called most important is how a ranking rots into a
 to-do list. Waiting means blocked, done or idle; working, snoozed and paused
 agents are skipped. When the band is just the agent you are on, it says so
 and names your demote and picker keys.
+
+## ctrl+alt+p
+
+One press takes the focused agent to one rank above the highest any other
+agent holds (working and snoozed ones count: rank is importance, not status),
+so it sits alone above today's top band. Already alone on top, it stays put
+and says so. If the others already hold 5 there is no room above them: it
+joins them at 5 and the toast says it is shared. It never lowers anyone else
+— lower the band yourself if the new task really outranks all of it.
 
 ## Snooze
 
