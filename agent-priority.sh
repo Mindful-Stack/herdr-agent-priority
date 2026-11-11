@@ -937,8 +937,11 @@ clear)
 top)
   pane=$(target_pane "${1:-}")
   [ -n "$pane" ] || exit 0
-  live=$(herdr agent list | jq -r '[.result.agents[].pane_id] | join(" ")') ||
-    { log "top: agent list failed"; exit 0; }
+  # Checked in two steps: in a pipe, jq succeeds on the empty output of a
+  # failed list, and an empty live set would rank against nobody.
+  alist=$(herdr agent list) || { log "top: agent list failed"; exit 0; }
+  live=$(printf '%s\n' "$alist" | jq -er '[.result.agents[].pane_id] | join(" ")') ||
+    { log "top: agent list unreadable"; exit 0; }
   locked top_step "$pane" "$live"
   title=$(pane_title "$pane")
   [ -n "$title" ] || title="$pane"
@@ -1044,6 +1047,7 @@ goto)
         [ .result.agents[]
           | select(.agent_status == "blocked" or .agent_status == "done"
                    or .agent_status == "idle")
+          | select((((.tokens.pri // "") | ltrimstr("P") | tonumber?) // 1) > 0)
           | select(.pane_id as $p | $wake | has($p))
           | $wake[.pane_id] ]
         | sort | .[0] // empty') || wake=''
