@@ -994,6 +994,30 @@ run top w1:p2
 check "top un-pauses straight to the top" "3" \
   "$(awk -F'\t' '$1 == "w1:p2" { print $2 }' "$(state agent-priority)")"
 
+setup
+mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
+printf 'w1:p1\t5\n' >"$(state agent-priority)"
+mark_scale
+# The pane check passes (explicit id, first agent list), then the second
+# list — the one top ranks against — fails with no output.
+cat >"$T/herdr" <<SH
+#!/bin/sh
+n=\$(cat "$T/n" 2>/dev/null || echo 0); n=\$((n + 1)); echo \$n >"$T/n"
+if [ "\$1 \$2" = "agent list" ] && [ \$n -ge 2 ]; then exit 1; fi
+exec "$HERE/bin/herdr" "\$@"
+SH
+chmod +x "$T/herdr"
+PATH="$T:$PATH" sh "$SCRIPT" top w1:p2 2>/dev/null || true
+check "top writes nothing when the live list fails" "" \
+  "$(awk -F'\t' '$1 == "w1:p2"' "$(state agent-priority)")"
+
+setup
+fixture '.result.agents |= map(.tokens = {"pri":"P0","prisort":"0"})'
+seed_snooze w1:p1 600 30
+run goto
+check "goto says nothing about snoozes when everything waiting is paused" "" \
+  "$(cat "$FIXTURE_DIR/toasts.log")"
+
 # --- one-time migration from the 1-5 scale ------------------------------------
 setup
 mkdir -p "$XDG_STATE_HOME/herdr-agent-priority"
