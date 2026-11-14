@@ -12,6 +12,7 @@
 #                                               a bare id or a full rows() row
 #   agent-priority.sh snooze [pane_id]   step the snooze: 5m, 30m, 2h, 4h, off
 #   agent-priority.sh goto              focus the next highest-priority waiting agent
+#   agent-priority.sh goto-prev         the same, cycling the top band backwards
 #   agent-priority.sh open              open the picker and act on its choice
 #   agent-priority.sh pick              the picker itself, run inside the popup
 #   agent-priority.sh rows              the picker's rows, also fzf's reload source
@@ -900,7 +901,7 @@ rows() {
 SELF="${HERDR_PLUGIN_ROOT:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}/agent-priority.sh"
 
 cmd=${1:-}
-[ -n "$cmd" ] || die "usage: $0 {up|down|set <0-5>|clear|top|clear-many <file>|snooze|goto|pick|rows|stamp|list} [pane_id]"
+[ -n "$cmd" ] || die "usage: $0 {up|down|set <0-5>|clear|top|clear-many <file>|snooze|goto|goto-prev|pick|rows|stamp|list} [pane_id]"
 shift
 log "run $cmd $* (herdr=$(command -v herdr || echo MISSING))"
 # Not from the ticker: it only touches the snooze store, and the long-lived
@@ -1011,8 +1012,9 @@ snooze)
   fi
   ;;
 
-goto)
-  # Cycle the TOP BAND, never further down it.
+goto|goto-prev)
+  # Cycle the TOP BAND, never further down it. goto-prev walks the same band
+  # the other way, starting from its last member when you are outside it.
   #
   # The band is every waiting agent sharing the highest rank present. Three
   # priority-5 sessions means alt+g walks those three and wraps; it will not
@@ -1073,11 +1075,18 @@ goto)
     toast "Top of the ranking" "$(printf '%s\n' "$head_row" | cut -f5)${hint:+ · $hint}"
     exit 0
   fi
-  target=$(printf '%s\n' "$band" | awk -F'\t' '
+  step=1
+  [ "$cmd" = goto-prev ] && step=-1
+  target=$(printf '%s\n' "$band" | awk -F'\t' -v step="$step" '
     { pane[NR] = $1; if ($4 == "*") here = NR }
-    END { if (NR) print pane[(here % NR) + 1] }')
+    END {
+      if (!NR) exit
+      # Outside the band, here is 0: forward lands on 1, backward on NR.
+      if (step < 0) print pane[(here > 1) ? here - 1 : NR]
+      else print pane[(here % NR) + 1]
+    }')
   [ -n "$target" ] || exit 0
-  log "goto focusing $target (band P$top, $count member(s))"
+  log "$cmd focusing $target (band P$top, $count member(s))"
   focus_pane "$target"
   ;;
 

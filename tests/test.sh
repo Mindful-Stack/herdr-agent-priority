@@ -333,6 +333,27 @@ check "goto actually focused w1:p4" "yes" \
 check "goto did not focus the snoozed pane" "no" \
   "$(grep -qF 'agent focus w1:p1' "$FIXTURE_DIR/calls.log" && echo yes || echo no)"
 
+# --- goto-prev: the same top band, walked backwards ---------------------------
+setup
+# Three-member P5 band (p1, p4, p5 by seq), focus on the middle one: forward
+# and backward must disagree, so the check cannot pass by accident.
+fixture '.result.agents |= map(.focused = (.pane_id == "w1:p4")) | .result.agents += [{"pane_id":"w1:p5","focused":false,"agent_status":"done","terminal_title":"eps","terminal_title_stripped":"eps","state_change_seq":50,"tokens":{"pri":"P5","prisort":"5"},"workspace_id":"w1","tab_id":"w1:t1"}]'
+run goto-prev
+check "goto-prev steps back to the previous band member" "yes" \
+  "$(grep -qF 'agent focus w1:p1' "$FIXTURE_DIR/calls.log" && echo yes || echo no)"
+setup
+fixture '.result.agents |= map(.focused = (.pane_id == "w1:p1"))'
+run goto-prev
+check "goto-prev wraps from the first band member to the last" "yes" \
+  "$(grep -qF 'agent focus w1:p4' "$FIXTURE_DIR/calls.log" && echo yes || echo no)"
+setup
+# Base fixture: focus is on w1:p2, outside the band. Backwards starts at the end.
+run goto-prev
+check "goto-prev from outside the band lands on its last member" "yes" \
+  "$(grep -qF 'agent focus w1:p4' "$FIXTURE_DIR/calls.log" && echo yes || echo no)"
+check "goto-prev never leaves the top band" "no" \
+  "$(grep -qF 'agent focus w1:p2' "$FIXTURE_DIR/calls.log" && echo yes || echo no)"
+
 setup
 # w1:p10 is a substring hazard for the naive `inside` check the code comment
 # warns about: if the filter matched "w1:p1" as a substring, snoozing w1:p1

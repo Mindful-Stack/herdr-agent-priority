@@ -57,6 +57,12 @@ command = "agent-priority.goto"
 description = "Go to the top-ranked waiting agent"
 
 [[keys.command]]
+key = "alt+shift+g"
+type = "plugin_action"
+command = "agent-priority.goto-prev"
+description = "Go to the previous top-ranked waiting agent"
+
+[[keys.command]]
 key = "prefix+p"
 type = "plugin_action"
 command = "agent-priority.open"
@@ -86,6 +92,7 @@ config: the plugin sets herdr's agent view to sort by rank. (`ui.agent_panel_sor
 | `ctrl+alt+shift+p` | Clear it back to unranked (1), from any rank. |
 | `alt+z` | Snooze it: 5m, 30m, 2h, 4h, off — one step per press. |
 | `alt+g` | Go to the top of the ranking, cycling within the top band. |
+| `alt+shift+g` | The same, cycling the top band backwards. |
 | `prefix+p` | Open the ranked picker. |
 
 `alt+shift+p` needs the kitty keyboard protocol between your terminal and
@@ -133,7 +140,8 @@ and cycles within it. It never drops you onto a 4 because you pressed again:
 pressing past what you called most important is how a ranking rots into a
 to-do list. Waiting means blocked, done or idle; working, snoozed and paused
 agents are skipped. When the band is just the agent you are on, it says so
-and names your demote and picker keys.
+and names your demote and picker keys. `alt+shift+g` walks the same band in
+the other direction, for when you pressed once too often.
 
 ## ctrl+alt+p
 

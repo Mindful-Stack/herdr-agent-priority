@@ -70,6 +70,12 @@ title = "Go to the top-ranked waiting agent"
 contexts = ["global"]
 command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/agent-priority.sh\" goto"]
 
+[[actions]]
+id = "goto-prev"
+title = "Go to the previous top-ranked waiting agent"
+contexts = ["global"]
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/agent-priority.sh\" goto-prev"]
+
 # `open`, not the picker pane directly: focusing from inside a popup is undone
 # as it closes, so this command opens it, waits for the choice, then focuses.
 [[actions]]
